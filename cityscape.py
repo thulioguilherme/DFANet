@@ -1,5 +1,3 @@
-# camera-ready
-#code borrowed form https://github.com/fregu856/deeplabv3
 import torch
 import torch.utils.data
 
@@ -15,32 +13,41 @@ train_dirs = ["jena/", "zurich/", "weimar/", "ulm/", "tubingen/", "stuttgart/",
 val_dirs = ["frankfurt/", "munster/", "lindau/"]
 test_dirs = ["berlin", "bielefeld", "bonn", "leverkusen", "mainz", "munich"]
 
+CLASS_MAPPING = {
+    0: 255, 1: 255, 2: 255, 3: 255, 4: 255, 5: 255, 6: 255, 7: 0, 8: 1, 9: 255,
+    10: 255, 11: 2, 12: 3, 13: 4, 14: 255, 15: 255, 16: 255, 17: 5, 18: 255, 
+    19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14, 28: 15,
+    29: 255, 30: 255, 31: 16, 32: 17, 33: 18
+}
+
 class DatasetTrain(torch.utils.data.Dataset):
+
     def __init__(self, cityscapes_data_path, cityscapes_meta_path):
         self.img_dir = cityscapes_data_path + "/leftImg8bit/train/"
-        self.label_dir = cityscapes_meta_path + "/label_imgs/"
+        self.label_dir = cityscapes_meta_path + "/gtFine/train/"
 
         self.img_h = 1024
         self.img_w = 2048
 
-        self.new_img_h = 1024
-        self.new_img_w = 2048
+        self.new_img_h = 512
+        self.new_img_w = 1024
 
         self.examples = []
         for train_dir in train_dirs:
             train_img_dir_path = self.img_dir + train_dir
-
             file_names = os.listdir(train_img_dir_path)
             for file_name in file_names:
                 img_id = file_name.split("_leftImg8bit.png")[0]
 
                 img_path = train_img_dir_path + file_name
 
-                label_img_path = self.label_dir + img_id + ".png"
+                label_img_path = self.label_dir + train_dir + img_id + "_gtFine_labelIds.png"
 
                 example = {}
                 example["img_path"] = img_path
+                # print('Image path:', img_path)
                 example["label_img_path"] = label_img_path
+                # print('Label path:', label_img_path)
                 example["img_id"] = img_id
                 self.examples.append(example)
 
@@ -111,6 +118,12 @@ class DatasetTrain(torch.utils.data.Dataset):
         img = img[start_y:end_y, start_x:end_x] # (shape: (1024, 1024, 3))
         label_img = label_img[start_y:end_y, start_x:end_x] # (shape: (1024, 1024))
         ########################################################################
+        label_np = np.array(label_img, dtype=np.int64)
+
+        mapped_label = np.zeros_like(label_np, dtype=np.int64)
+
+        for original_id, train_id in CLASS_MAPPING.items():
+            mapped_label[label_np == original_id] = train_id
 
         # # # # # # # # debug visualization START
         # print (img.shape)
@@ -132,7 +145,7 @@ class DatasetTrain(torch.utils.data.Dataset):
         # convert numpy -> torch:
         img = torch.from_numpy(img) # (shape: (3, 1024, 1024))
         #label_img = torch.from_numpy(label_img) # (shape: (1024, 1024))
-        label_img=torch.LongTensor(label_img)
+        label_img=torch.from_numpy(mapped_label)
         return (img, label_img)
 
     def __len__(self):
@@ -141,7 +154,7 @@ class DatasetTrain(torch.utils.data.Dataset):
 class DatasetVal(torch.utils.data.Dataset):
     def __init__(self, cityscapes_data_path, cityscapes_meta_path):
         self.img_dir = cityscapes_data_path + "/leftImg8bit/val/"
-        self.label_dir = cityscapes_meta_path + "/label_imgs/"
+        self.label_dir = cityscapes_meta_path + "/gtFine/val/"
 
         self.img_h = 1024
         self.img_w = 2048
@@ -159,12 +172,14 @@ class DatasetVal(torch.utils.data.Dataset):
 
                 img_path = val_img_dir_path + file_name
 
-                label_img_path = self.label_dir + img_id + ".png"
-                label_img = cv2.imread(label_img_path, -1) # (shape: (1024, 2048))
+                label_img_path = self.label_dir + val_dir + img_id + "_gtFine_labelIds.png"
+                # label_img = cv2.imread(label_img_path, -1) # (shape: (1024, 2048))
 
                 example = {}
                 example["img_path"] = img_path
+                # print('Image path:', img_path)
                 example["label_img_path"] = label_img_path
+                # print('Label path:', label_img_path)
                 example["img_id"] = img_id
                 self.examples.append(example)
 
@@ -182,12 +197,20 @@ class DatasetVal(torch.utils.data.Dataset):
         img = cv2.resize(img, (self.new_img_w, self.new_img_h),
                          interpolation=cv2.INTER_NEAREST) # (shape: (512, 1024, 3))
 
+
         label_img_path = example["label_img_path"]
         label_img = cv2.imread(label_img_path, -1) # (shape: (1024, 2048))
         # resize label_img without interpolation (want the resulting image to
         # still only contain pixel values corresponding to an object class):
         label_img = cv2.resize(label_img, (self.new_img_w, self.new_img_h),
                                interpolation=cv2.INTER_NEAREST) # (shape: (512, 1024))
+
+        label_np = np.array(label_img, dtype=np.int64)
+
+        mapped_label = np.zeros_like(label_np, dtype=np.int64)
+
+        for original_id, train_id in CLASS_MAPPING.items():
+            mapped_label[label_np == original_id] = train_id
 
         #center crop.image_size =(512,512)
         #img = img[:, 256:768] # (shape: (1024, 1024, 3))
@@ -209,7 +232,7 @@ class DatasetVal(torch.utils.data.Dataset):
 
         # convert numpy -> torch:
         img = torch.from_numpy(img) # (shape: (3, 512, 1024))
-        label_img=torch.LongTensor(label_img) # (shape: (512, 1024))
+        label_img=torch.from_numpy(mapped_label) # (shape: (512, 1024))
 
         return (img, label_img)
 
@@ -308,6 +331,7 @@ class DatasetThnSeq(torch.utils.data.Dataset):
 
     def __len__(self):
         return self.num_examples
+
 if __name__=='__main__':
     train_dataset = DatasetTrain(cityscapes_data_path="/home/shen/Data/DataSet/Cityscape",
                                 cityscapes_meta_path="/home/shen/Data/DataSet/Cityscape/gtFine/")
