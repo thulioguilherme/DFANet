@@ -1,25 +1,21 @@
-from thop import profile, clever_format
+from thop import clever_format, profile
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import xception
-
-import os
+from pathlib import Path
 import sys
 
 # #{ include this project packages
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
-project_root = os.path.join(current_dir, '..')
-
-sys.path.append(project_root)
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # #}
 
-from config.settings import DFANetConfig
+from models.xception import BlockA, Conv2dBNReLU, Enc, FCAttention, SeparableConv2d
 
 
 # #{ load_dfanet_backbone_weights()
@@ -27,10 +23,8 @@ from config.settings import DFANetConfig
 def load_dfanet_backbone_weights(dfanet, backbone_weights_path='xception.pth'):
     backbone_weights = torch.load(backbone_weights_path)
     backbone_weights_dict = dict(backbone_weights)
-    # print(backbone_weights_dict.keys())
 
     dfanet_state_dict = dfanet.state_dict()
-    # print(dfanet_state_dict.keys())
 
     for key in backbone_weights_dict:
         if key.split('.')[0] == 'conv1':
@@ -69,9 +63,11 @@ def load_dfanet_backbone_weights(dfanet, backbone_weights_path='xception.pth'):
 
 # #}
 
+
 # #{ Stage
 
 class Stage(nn.Module):
+
     def __init__(self, channels_config, stage_index):
         super(Stage, self).__init__()
         self.stage_index = stage_index
@@ -102,9 +98,11 @@ class Stage(nn.Module):
 
 # #}
 
+
 # #{ Encoder
 
 class Encoder(nn.Module):
+
     def __init__(self, channels_config):
         super(Encoder, self).__init__()
 
@@ -134,9 +132,11 @@ class Encoder(nn.Module):
 
 # #}
 
+
 # #{ Decoder
 
 class Decoder(nn.Module):
+
     def __init__(self, num_classes, decoder_channels):
         super(Decoder, self).__init__()
 
@@ -181,20 +181,18 @@ class Decoder(nn.Module):
 
 # #}
 
+
 # #{ DFANet
 
 class DFANet(nn.Module):
-    def __init__(self, config):
-        super(DFANet,self).__init__()
-        self.encoder = Encoder(config.ENCODER_CHANNELS)
-        if not config.USE_PRETRAINED_WEIGHTS:
-            print('Initializing encoder weights')
-            self.init_weights(self.encoder)
 
-        self.decoder = Decoder(config.NUM_CLASSES, config.DECODER_CHANNELS)
-        if not config.USE_PRETRAINED_WEIGHTS:
-            print('Initializing decoder weights')
-            self.init_weights(self.decoder)
+    def __init__(self, num_classes, encoder_channels, decoder_channels):
+        super(DFANet, self).__init__()
+        self.encoder = Encoder(encoder_channels)
+        self.init_weights(self.encoder)
+        self.decoder = Decoder(num_classes, decoder_channels)
+        self.init_weights(self.decoder)
+
 
     def forward(self, x):
         x0, x1, x2, x5, x6, x7 = self.encoder(x)
@@ -232,14 +230,23 @@ class DFANet(nn.Module):
 
 # #}
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f'Using {device} as device')
 
-    dfanet_config = DFANetConfig()
-    dfanet = DFANet(dfanet_config)
+    dfanet = DFANet(
+        num_classes=19,
+        encoder_channels=[
+            [  8,  48,  96],
+            [240, 144, 288],
+            [240, 144, 288]
+        ],
+        decoder_channels=48
+    )
 
-    load_dfanet_backbone_weights(dfanet, backbone_weights_path='../xception.pth')
+    # load_dfanet_backbone_weights(dfanet, backbone_weights_path='../xception.pth')
 
     dummy_input = torch.randn(1, 3, 512, 1024)
     flops, params = profile(dfanet, inputs=(dummy_input, ))

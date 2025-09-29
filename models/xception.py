@@ -1,12 +1,45 @@
-from thop import profile, clever_format
+from thop import clever_format, profile
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+# #{ init_weights()
+
+def init_weights(module):
+    for m in module.named_children():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+            elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d)):
+                nn.init.ones_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, (nn.Sequential,
+                                Conv2dBNReLU,
+                                SeparableConv2,
+                                BlockA,
+                                Enc,
+                                FCAttention)):
+                init_weights(m)
+            elif isinstance(m, (nn.ReLU, nn.ReLU6)):
+                pass
+            else:
+                pass
+
+# #}
+
+
 # #{ Conv2dBNReLU
 
 class Conv2dBNReLU(nn.Module):
+
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0,
                  dilation=1, groups=1, norm_layer=nn.BatchNorm2d):
         super(Conv2dBNReLU, self).__init__()
@@ -33,9 +66,11 @@ class Conv2dBNReLU(nn.Module):
 
 # #}
 
+
 # #{ SeparableConv2d
 
 class SeparableConv2d(nn.Module):
+
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, dilation=1, bias=False):
         super(SeparableConv2d, self).__init__()
         self.kernel_size = kernel_size
@@ -88,9 +123,11 @@ class SeparableConv2d(nn.Module):
 
 # #}
 
+
 # #{ BlockA
 
 class BlockA(nn.Module):
+
     def __init__(self, in_channels, out_channels, stride):
         super(BlockA, self).__init__()
 
@@ -133,9 +170,11 @@ class BlockA(nn.Module):
 
 # #}
 
+
 # #{ Enc
 
 class Enc(nn.Module):
+
     def __init__(self, in_channels, out_channels, blocks):
         super(Enc, self).__init__()
         block = list()
@@ -149,9 +188,11 @@ class Enc(nn.Module):
 
 # #}
 
+
 # #{ FCAttention
 
 class FCAttention(nn.Module):
+
     def __init__(self, in_channels):
         super(FCAttention,self).__init__()
         self.avgpool = nn.AdaptiveAvgPool2d(1)
@@ -172,9 +213,11 @@ class FCAttention(nn.Module):
 
 # #}
 
+
 # #{ XceptionA
 
 class XceptionA(nn.Module):
+
     def __init__(self, num_classes):
         super(XceptionA, self).__init__()
 
@@ -212,13 +255,16 @@ class XceptionA(nn.Module):
 
 # #}
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f'Using {device} as device')
 
     xception = XceptionA(1000)
-    dummy_input = torch.randn(1, 3, 224, 224)
+    init_weights(xception)
 
+    dummy_input = torch.randn(1, 3, 224, 224)
     flops, params = profile(xception, inputs=(dummy_input, ))
     flops, params = clever_format([flops, params], '%.3f')
 
@@ -229,12 +275,3 @@ if __name__=='__main__':
     dummy_input = dummy_input.to(device)
     output = xception(dummy_input)
     print('Output size:', output.size())
-
-    # torch.onnx.export(
-    #     xception,
-    #     dummy_input,
-    #     "xception.onnx",
-    #     verbose=False,
-    #     input_names=['input'],
-    #     output_names=['output']
-    # )

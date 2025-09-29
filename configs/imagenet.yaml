@@ -1,0 +1,13 @@
+train:
+  accumulation_steps: 4
+
+  batch_size: 256 # 256
+
+  num_epochs: 60 # 60
+
+  optimizer:
+    name: 'SGD' # SGD
+    initial_learning_rate: 0.3 # 0.3
+    last_learning_rate: 0.03 # 0.03
+    weight_decay: 0.00004 # 0.00004
+    momentum: 0.9 # 0.9

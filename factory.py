@@ -3,13 +3,14 @@ from .models.dfanet import DFANet
 
 from .config.settings import DFANetConfig
 
-class Factory():
-    def __init__(self):
-        print('Initialized the DFANet factory')
+class DFANetFactory():
+    def getModel(self, model_name):
+        model = None
 
-    def get_model(self, model_name):
         if model_name == 'Xception':
-            return XceptionA(num_classes=1000)
+            model = XceptionA(num_classes=1000)
         elif model_name == 'DFANet':
             dfanet_config = DFANetConfig()
-            return DFANet(dfanet_config)
+            model = DFANet(dfanet_config)
+
+        return model
