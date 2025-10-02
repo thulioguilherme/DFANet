@@ -1,24 +1,23 @@
-import torch
-from torch.utils.data import DataLoader
+import datetime
 
-from torchvision.datasets import ImageFolder
-from torchvision import transforms
+from pathlib import Path
+
+import sys
+
+import torch
 
 from torch.cuda.amp import autocast, GradScaler
-
 from torch.nn import CrossEntropyLoss
-
 import torch.optim as optim
-from torch.optim import lr_scheduler
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+
+from torchvision import transforms
+from torchvision.datasets import ImageFolder
 
 from tqdm import tqdm
 
-import datetime
-
-import sys
 import yaml
-
-from pathlib import Path
 
 # #{ include this project packages
 
@@ -39,10 +38,10 @@ def read_config_file(file_path):
             yaml_content = yaml.safe_load(file)
             return yaml_content
     except FileNotFoundError:
-        print(f"Error: The file '{file_path}' was not found.")
+        print(f'Error: The file {file_path} was not found.')
         return None
     except yaml.YAMLError as exc:
-        print(f"Error parsing YAML file: {exc}")
+        print(f'Error parsing YAML file: {exc}')
         return None
 
 # #}
@@ -93,14 +92,22 @@ def compute_top_accuracy(model, dataloader, device):
 # #}
 
 
-# #{ generate_model_filename()
+# #{ get_current_datetime_as_string()
 
-def generate_model_filename(model_name, top1_acc):
+def get_current_datetime_as_string():
     current_datetime = datetime.datetime.now()
 
-    formatted_accuracy = f'{top1_acc.item():.1f}'.replace('.', '_')
+    datetime_str = current_datetime.strftime('%Y%m%d_%H%M%S')
 
-    datetime_str = current_datetime.strftime('%y-%m-%d_%H-%M-%S')
+    return datetime_str
+
+# #}
+
+
+# #{ generate_model_filename()
+
+def generate_model_filename(model_name, datetime_str, top1_acc):
+    formatted_accuracy = f'{top1_acc.item():.1f}'.replace('.', '_')
 
     filename = f'{model_name}_top1_acc_{formatted_accuracy}_{datetime_str}.pth'
 
@@ -110,6 +117,10 @@ def generate_model_filename(model_name, top1_acc):
 
 
 if __name__ == '__main__':
+
+    # cleanup any residual memory from previous run
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # allow CuDNN to auto-tune
     torch.backends.cudnn.benchmark = True
@@ -125,6 +136,10 @@ if __name__ == '__main__':
     home_path = Path().home()
     train_dir = home_path / '../app/data/imagenet-val'
     val_dir = home_path / '../app/data/imagenet-val'
+
+    datetime_str = get_current_datetime_as_string()
+    log_dir = 'xceptionA_' + datetime_str
+    writer = SummaryWriter(home_path / '../app/runs' / log_dir)
 
     # #{ prepare Imagenet dataset loaders
 
@@ -150,8 +165,8 @@ if __name__ == '__main__':
         num_workers=8
     )
 
-    num_classes = len(train_dataset.classes)
-    print(f'Number of classes in ImageNet: {num_classes}')
+    train_num_images = len(train_dataset)
+    print(f'Number of images in train dataset: {train_num_images}')
 
     val_transforms = transforms.Compose([
         transforms.Resize(256),
@@ -175,7 +190,13 @@ if __name__ == '__main__':
         num_workers=8
     )
 
+    val_num_images = len(val_dataset)
+    print(f'Number of images in validation dataset: {val_num_images}')
+
     # #}
+
+    num_classes = len(train_dataset.classes)
+    print(f'Number of classes: {num_classes}')
 
     xception = XceptionA(num_classes=num_classes)
     init_weights(xception)
@@ -210,7 +231,11 @@ if __name__ == '__main__':
         xception.train()
         train_loss = 0.0
 
-        train_loader_tqdm = tqdm(train_loader, desc=f'(Train) Epoch {epoch+1}/{num_epochs}', unit='batch')
+        train_loader_tqdm = tqdm(
+            train_loader,
+            desc=f'(Train) Epoch {epoch+1}/{num_epochs}',
+            unit='batch'
+        )
 
         for i, (inputs, labels) in enumerate(train_loader_tqdm):
             inputs = inputs.to(device)
@@ -237,6 +262,8 @@ if __name__ == '__main__':
         train_epoch_loss = train_loss / len(train_loader.dataset)
         print('  Loss: {:.4f}'.format(train_epoch_loss))
 
+        writer.add_scalar('Loss/train', train_epoch_loss, epoch + 1)
+
         # #}
 
         # #{ evaluation loop
@@ -244,7 +271,11 @@ if __name__ == '__main__':
         xception.eval()
         val_loss = 0.0
 
-        val_loader_tqdm = tqdm(val_loader, desc=f'(Val) Epoch {epoch+1}/{num_epochs}', unit='batch')
+        val_loader_tqdm = tqdm(
+            val_loader,
+            desc=f'(Val) Epoch {epoch+1}/{num_epochs}',
+            unit='batch'
+        )
 
         with torch.no_grad():
             with autocast():
@@ -260,14 +291,28 @@ if __name__ == '__main__':
         val_loss_epoch = val_loss / len(val_loader.dataset)
         print('  Loss: {:.4f}'.format(val_loss_epoch))
 
+        writer.add_scalar('Loss/val', val_loss_epoch, epoch + 1)
+
         # #}
+
+        # cleanup any residual memory after each epoch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     print('Training finished!')
 
     top1_acc, top5_acc = compute_top_accuracy(xception, val_loader, device)
-    print(f'Validation Top-1 Accuracy: {top1_acc.item():.2f}%')
-    print(f'Validation Top-5 Accuracy: {top5_acc.item():.2f}%')
+    print(f'Validation top-1 accuracy: {top1_acc.item():.2f}%')
+    print(f'Validation top-5 accuracy: {top5_acc.item():.2f}%')
 
-    model_filename = generate_model_filename('xception', top1_acc)
+    model_filename = generate_model_filename('xception', datetime_str, top1_acc)
     torch.save(xception.state_dict(), this_file_dir / model_filename)
     print(f'Weights saved to {model_filename}!')
+
+    writer.close()
+
+    # final cleanup before exiting
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    sys.exit(0)

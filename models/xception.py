@@ -23,7 +23,7 @@ def init_weights(module):
                     nn.init.zeros_(m.bias)
             elif isinstance(m, (nn.Sequential,
                                 Conv2dBNReLU,
-                                SeparableConv2,
+                                SeparableConv2d,
                                 BlockA,
                                 Enc,
                                 FCAttention)):
@@ -71,55 +71,36 @@ class Conv2dBNReLU(nn.Module):
 
 class SeparableConv2d(nn.Module):
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=0, dilation=1, bias=False):
+    def __init__(self, in_channels, out_channels, stride=1, bias=False):
         super(SeparableConv2d, self).__init__()
-        self.kernel_size = kernel_size
-        self.dilation = dilation
 
         self.depthwise = nn.Conv2d(
             in_channels,
             in_channels,
-            kernel_size,
-            stride,
-            padding,
-            dilation,
+            kernel_size=3,
+            stride=stride,
+            padding=1,
             groups=in_channels,
             bias=bias
         )
 
         self.bn = nn.BatchNorm2d(in_channels)
-        self.relu = nn.ReLU()
 
         self.pointwise = nn.Conv2d(
             in_channels,
             out_channels,
-            1, # kernel_size
-            1, # stride
-            0, # padding
-            1, # dilation
+            kernel_size=1,
+            stride=1,
+            padding=0,
             bias=bias
         )
 
     def forward(self, x):
-        x = self.fix_padding(x, self.kernel_size, self.dilation)
-
         x = self.depthwise(x)
-
         x = self.bn(x)
-        x = self.relu(x)
-
         x = self.pointwise(x)
 
         return x
-
-    def fix_padding(self, x, kernel_size, dilation):
-        kernel_size_effective = kernel_size + (kernel_size - 1) * (dilation - 1)
-        pad_total = kernel_size_effective - 1
-        pad_beg = pad_total // 2
-        pad_end = pad_total - pad_beg
-        padded_inputs = F.pad(x, (pad_beg, pad_end, pad_beg, pad_end))
-
-        return padded_inputs
 
 # #}
 
@@ -131,40 +112,43 @@ class BlockA(nn.Module):
     def __init__(self, in_channels, out_channels, stride):
         super(BlockA, self).__init__()
 
-        self.stride = stride
-
-        if stride != 1:
-            # Conv2d (1x1, stride 2)
-            self.conv1 = nn.Conv2d(in_channels, out_channels, 1, 2, bias=False)
-            self.bn = nn.BatchNorm2d(out_channels)
-
-        rep = list()
         inter_channels = out_channels // 4
 
-        # SeparableConv2d (3x3, stride 1)
-        rep.append(SeparableConv2d(in_channels, inter_channels, 3, 1))
-        rep.append(nn.BatchNorm2d(inter_channels))
-        rep.append(nn.ReLU())
+        self.skip_conv = None
+        if stride != 1 or in_channels != out_channels:
+            self.skip_conv = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+            )
 
-        # SeparableConv2d (3x3, stride 1)
-        rep.append(SeparableConv2d(inter_channels, inter_channels, 3, 1))
-        rep.append(nn.BatchNorm2d(inter_channels))
-        rep.append(nn.ReLU())
+        self.separable_conv0 = nn.Sequential(
+            nn.ReLU(), # ReLU is often applied before convolution
+            SeparableConv2d(in_channels, inter_channels, stride=1),
+            nn.BatchNorm2d(inter_channels)
+        )
 
-        # SeparableConv2d (3x3, stride 1 or 2)
-        rep.append(SeparableConv2d(inter_channels, out_channels, 3, stride))
-        rep.append(nn.BatchNorm2d(out_channels))
-        rep.append(nn.ReLU())
+        self.separable_conv1 = nn.Sequential(
+            nn.ReLU(),
+            SeparableConv2d(inter_channels, inter_channels, stride=1),
+            nn.BatchNorm2d(inter_channels)
+        )
 
-        self.rep = nn.Sequential(*rep)
+        self.separable_conv2 = nn.Sequential(
+            nn.ReLU(),
+            SeparableConv2d(inter_channels, out_channels, stride=stride),
+            nn.BatchNorm2d(out_channels)
+        )
 
     def forward(self, x):
-        out = self.rep(x)
+        skip = x
+        if self.skip_conv is not None:
+            skip = self.skip_conv(x)
 
-        if self.stride != 1:
-            out = out + self.bn(self.conv1(x))
-        else:
-            out = out + x
+        residual = self.separable_conv0(x)
+        residual = self.separable_conv1(residual)
+        residual = self.separable_conv2(residual)
+
+        out = residual + skip
 
         return out
 

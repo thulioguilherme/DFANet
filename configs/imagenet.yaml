@@ -3,7 +3,7 @@ train:
 
   batch_size: 256 # 256
 
-  num_epochs: 60 # 60
+  num_epochs: 6 # 60
 
   optimizer:
     name: 'SGD' # SGD
